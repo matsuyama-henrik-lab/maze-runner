@@ -5,10 +5,12 @@ import json
 import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
+from PIL import Image
 
 from dojo import maze as mz
 from dojo.agents import random_agent, wall_follower
 from dojo.env import CHANNELS, FORWARD, LEFT, REWARDS, MazeEnv, obs_layout
+from dojo.viewer import grid_at, record_episode, replay_page, save_gif
 
 # ---------------------------------------------------------------------------
 # maze.py
@@ -309,3 +311,26 @@ def test_random_agent_runs():
     env = MazeEnv(width=7, height=7)
     _, _, info = run_episode(env, random_agent, seed=0)
     assert info["steps"] > 0
+
+
+# ---------------------------------------------------------------------------
+# viewer.py
+# ---------------------------------------------------------------------------
+
+
+def test_record_episode_and_replay(tmp_path):
+    env = MazeEnv(maze=mz.DEMO_MAZE)
+    episode = record_episode(env, wall_follower(env))
+    assert episode["solved"]
+    assert len(episode["states"]) == len(episode["actions"]) + 1 == len(episode["rewards"]) + 1
+    assert json.loads(json.dumps(episode)) == episode
+    page = replay_page(episode)
+    assert page.startswith("<!DOCTYPE html>") and "__DATA__" not in page
+    save_gif(episode, tmp_path / "demo.gif")
+    assert Image.open(tmp_path / "demo.gif").n_frames == len(episode["states"])
+
+
+def test_grid_at_removes_key_and_opened_door():
+    state = {"has_key": True, "door_open": True}
+    grid = grid_at(CORRIDOR, state)
+    assert "".join(grid[1]) == "<......>"

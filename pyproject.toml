@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 sb3 = ["stable-baselines3>=2.4,<3"]
-dev = ["pytest>=8", "jupytext>=1.16"]
+dev = ["pytest>=8", "jupytext>=1.16", "ipykernel>=6", "nbconvert>=7"]
 
 [tool.setuptools]
 packages = ["dojo"]
