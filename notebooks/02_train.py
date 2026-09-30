@@ -106,6 +106,8 @@ save_gif(episode, "runs/keydoor9/replay.gif")
 # - `--width 11 --height 11 --loops 0.1 --key-door --traps 3` (everything)
 # - `--maze demo` (always the same maze — why does this fail? Hint: where is
 #   the key, and where does the compass point?)
+# - `--maze demo --explored` (the agent also sees how much of the maze it has
+#   explored — now it works. Why? Does it also help on new mazes?)
 # - Change `REWARDS["new_cell"]` to 0 and train again.
 
 # %% [markdown]

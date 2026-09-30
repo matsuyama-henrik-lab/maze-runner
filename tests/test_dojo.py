@@ -1,6 +1,8 @@
 """Tests for the dojo. Run with:  pytest -q"""
 
 import json
+import socket
+import threading
 
 import numpy as np
 import pytest
@@ -9,6 +11,7 @@ from gymnasium.utils.env_checker import check_env
 from PIL import Image
 
 from dojo import maze as mz
+from dojo import bridge
 from dojo.agents import random_agent, wall_follower
 from dojo.env import CHANNELS, FORWARD, LEFT, REWARDS, MazeEnv, obs_layout
 from dojo.train import (Config, check_config, evaluate, export_weights, forward, load_weights,
@@ -439,3 +442,56 @@ def test_weights_policy_samples_with_softmax(tmp_path):
     obs, _ = env.reset(seed=0)
     counts = np.bincount([policy(obs) for _ in range(600)], minlength=3)
     assert all(counts > 150)   # all three actions are chosen
+
+
+# ---------------------------------------------------------------------------
+# bridge.py
+# ---------------------------------------------------------------------------
+
+def start_test_server(env, policy):
+    """Run the bridge in a background thread on a free port; return the port."""
+    server = bridge.make_server(port=0)
+    thread = threading.Thread(target=bridge.serve, args=(server, env, policy, 1), daemon=True)
+    thread.start()
+    return server.getsockname()[1]
+
+
+def test_bridge_round_trip():
+    """A tiny test client plays the role of Godot."""
+    env = MazeEnv(maze=mz.DEMO_MAZE)
+    port = start_test_server(env, wall_follower(env))
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+        lines = client.makefile("r", encoding="utf-8")
+
+        def send(message):
+            client.sendall((json.dumps(message) + "\n").encode("utf-8"))
+            return json.loads(lines.readline())
+
+        assert send({"type": "step"})["type"] == "error"          # no reset yet
+        reply = send({"type": "reset", "seed": 3})
+        assert reply["maze"]["rows"] == mz.DEMO_MAZE
+        assert reply["state"]["x"] == 1 and reply["config"] == env.config
+        assert reply["obs_layout"]["view"] == [0, 150]
+
+        reply = send({"type": "step", "action": 2})               # a human turns right
+        assert reply["action"] == 2 and reply["state"]["direction"] == 2
+        assert send({"type": "step", "action": 7})["type"] == "error"
+        assert send({"type": "jump"})["type"] == "error"
+
+        for _ in range(200):                                       # the agent plays
+            reply = send({"type": "step"})
+            if reply["done"]:
+                break
+        assert reply["done"] and (reply["state"]["x"], reply["state"]["y"]) == (10, 7)
+        assert send({"type": "step"})["type"] == "error"          # episode is over
+
+
+def test_bridge_with_trained_weights(tmp_path):
+    """handle_message() without a socket, with an exported (untrained) agent."""
+    env = MazeEnv(width=7, height=7)
+    export_weights(make_actor(153, 3), tmp_path / "weights.json", env.config)
+    game = bridge.new_game(env, weights_policy(load_weights(tmp_path / "weights.json", env.config)))
+    reply = bridge.handle_message(game, {"type": "reset", "seed": 5})
+    assert reply["maze"]["rows"] == mz.generate(7, 7, seed=5)
+    reply = bridge.handle_message(game, {"type": "step"})
+    assert reply["action"] in (0, 1, 2) and reply["state"]["steps"] == 1
