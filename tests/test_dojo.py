@@ -1,8 +1,14 @@
 """Tests for the dojo. Run with:  pytest -q"""
 
+import json
+
+import numpy as np
 import pytest
+from gymnasium.utils.env_checker import check_env
 
 from dojo import maze as mz
+from dojo.agents import random_agent, wall_follower
+from dojo.env import CHANNELS, FORWARD, LEFT, REWARDS, MazeEnv, obs_layout
 
 # ---------------------------------------------------------------------------
 # maze.py
@@ -131,3 +137,175 @@ def test_ascii_and_json_round_trip():
     assert mz.from_json(mz.to_json(maze)) == maze
     shown = mz.to_ascii(mz.DEMO_MAZE, agent=(1, 1))
     assert shown.splitlines()[1] == "<@..#.....#"
+
+
+# ---------------------------------------------------------------------------
+# env.py and agents.py
+# ---------------------------------------------------------------------------
+
+
+# An open room: good for testing what the agent sees.
+ROOM = mz.from_ascii("""
+    #######
+    #.....#
+    #.....#
+    <..^..#
+    #.....#
+    #.....#
+    #####>#
+""")
+
+# A corridor with key and door: start (1,1), key (2,1), door (4,1).
+CORRIDOR = mz.from_ascii("""
+    ########
+    <.k.D..>
+    ########
+""")
+
+
+def run_episode(env, policy, seed=None):
+    obs, info = env.reset(seed=seed)
+    total, done = 0.0, False
+    while not done:
+        obs, reward, terminated, truncated, info = env.step(policy(obs))
+        total += reward
+        done = terminated or truncated
+    return total, terminated, info
+
+
+def view_channel(env, obs, name):
+    view = env.config["view"]
+    return obs[:view * view * len(CHANNELS)].reshape(len(CHANNELS), view, view)[CHANNELS.index(name)]
+
+
+@pytest.mark.filterwarnings("ignore:.*alternative render modes")
+def test_check_env():
+    check_env(MazeEnv(), skip_render_check=False)
+    check_env(MazeEnv(maze=mz.DEMO_MAZE, key_door=True))
+
+
+def test_obs_layout():
+    assert CHANNELS == ["wall", "key", "door", "trap", "exit", "visited"]
+    env = MazeEnv()
+    obs, _ = env.reset(seed=0)
+    assert env.layout == {"view": (0, 150), "has_key": (150, 151), "compass": (151, 153)}
+    assert obs.shape == (153,) and obs.dtype == np.float32
+    assert obs_layout({"view": 3, "compass": False}) == {"view": (0, 54), "has_key": (54, 55)}
+    assert MazeEnv(view=3, compass=False).observation_space.shape == (55,)
+
+
+def test_reset_seed_selects_maze():
+    env = MazeEnv(width=11, height=9, key_door=True, traps=2)
+    env.reset(seed=42)
+    assert env.maze == mz.generate(11, 9, seed=42, key_door=True, traps=2)
+
+
+def test_wall_ahead_is_in_the_same_slot_for_every_direction():
+    env = MazeEnv(maze=ROOM)
+    env.reset()
+    c = env.config["view"] // 2
+    # Positions next to each outer wall, facing that wall.
+    for (x, y, direction) in [(3, 1, 0), (5, 3, 1), (2, 5, 2), (1, 2, 3)]:
+        env.x, env.y, env.direction = x, y, direction
+        walls = view_channel(env, env._observation(), "wall")
+        assert walls[c - 1, c] == 1       # wall directly ahead
+        assert walls[c, c - 1] == 0 and walls[c, c + 1] == 0  # open left and right
+        assert walls[c, c] == 0           # the agent's own cell
+
+
+def test_view_rotates_with_the_agent():
+    # Facing east, the world is rotated counterclockwise by 90 degrees, etc.
+    env = MazeEnv(width=11, height=11, loops=0.2, key_door=True, traps=3)
+    env.reset(seed=1)
+    for (x, y) in [(3, 3), (5, 5), (1, 7)]:
+        env.x, env.y, env.direction = x, y, 0
+        north = env._view_window()
+        for direction in range(4):
+            env.direction = direction
+            assert np.array_equal(env._view_window(), np.rot90(north, k=direction, axes=(1, 2)))
+
+
+def test_trap_in_view_and_compass():
+    env = MazeEnv(maze=ROOM)
+    env.reset()
+    env.x, env.y, env.direction = 1, 3, 1          # trap two cells ahead
+    c = env.config["view"] // 2
+    traps = view_channel(env, env._observation(), "trap")
+    assert traps[c - 2, c] == 1 and traps.sum() == 1
+    obs = env._observation()
+    forward, right = obs[env.layout["compass"][0]:]
+    assert forward > 0 and right > 0                # exit (5,6) is ahead-right
+
+
+def test_door_blocks_without_key_and_opens_with_key():
+    env = MazeEnv(maze=CORRIDOR)
+    env.reset()
+    env.x = 3                                       # skip the key, stand before the door
+    _, reward, *_ = env.step(FORWARD)
+    assert (env.x, env.door_open) == (3, False)     # blocked
+    assert reward == pytest.approx(REWARDS["step"])
+    env.has_key = True
+    _, reward, *_ = env.step(FORWARD)
+    assert (env.x, env.door_open) == (4, True)
+    assert reward == pytest.approx(REWARDS["step"] + REWARDS["door"])
+    assert env.grid[1][4] == mz.FLOOR
+
+
+def test_key_door_exit_rewards():
+    env = MazeEnv(maze=CORRIDOR)
+    obs, _ = env.reset()
+    assert obs[env.layout["has_key"][0]] == 0
+    rewards = []
+    for _ in range(6):
+        obs, reward, terminated, truncated, _ = env.step(FORWARD)
+        rewards.append(reward)
+    assert env.has_key and obs[env.layout["has_key"][0]] == 1
+    assert terminated and not truncated
+    assert sum(rewards) == pytest.approx(6 * REWARDS["step"] + REWARDS["key"]
+                                         + REWARDS["door"] + REWARDS["exit"])
+
+
+def test_trap_costs_but_episode_continues():
+    env = MazeEnv(maze=mz.DEMO_MAZE)
+    env.reset()
+    env.x, env.y, env.direction = 3, 5, 1           # trap (4,5) ahead
+    _, reward, terminated, _, _ = env.step(FORWARD)
+    assert (env.x, env.y) == (4, 5) and not terminated
+    assert reward == pytest.approx(REWARDS["step"] + REWARDS["trap"])
+    assert env.state()["trap_hits"] == 1
+
+
+def test_truncation_and_state():
+    env = MazeEnv(maze=mz.DEMO_MAZE, max_steps=10)
+    env.reset()
+    for _ in range(10):
+        _, _, terminated, truncated, _ = env.step(LEFT)
+    assert truncated and not terminated
+    state = env.state()
+    assert json.loads(json.dumps(state)) == state
+    assert state["steps"] == 10 and state["visited"] == [[1, 1]]
+
+
+def test_render():
+    env = MazeEnv(maze=mz.DEMO_MAZE, render_mode="rgb_array")
+    env.reset()
+    assert env.render().shape == (9 * 16, 11 * 16, 3)
+    env = MazeEnv(maze=mz.DEMO_MAZE, render_mode="ansi")
+    env.reset()
+    assert env.render().splitlines()[1] == "<@..#.....#"
+
+
+@pytest.mark.parametrize("key_door", [False, True])
+def test_wall_follower_solves_perfect_mazes(key_door):
+    for width, height in [(5, 5), (9, 9), (15, 11)]:
+        env = MazeEnv(width=width, height=height, key_door=key_door)
+        policy = wall_follower(env)
+        for seed in range(15):
+            _, terminated, info = run_episode(env, policy, seed=seed)
+            assert terminated and info["at_exit"], (width, height, seed)
+
+
+def test_random_agent_runs():
+    env = MazeEnv(width=7, height=7)
+    _, _, info = run_episode(env, random_agent, seed=0)
+    assert info["steps"] > 0

@@ -37,10 +37,10 @@ TILES = [
     # The entry cannot be walked on (the agent cannot leave the maze this
     # way), so the agent sees it as a wall.
     {"symbol": "<", "name": "entry", "color": (150, 190, 230), "emoji": "",   "channel": "wall"},
-    {"symbol": ">", "name": "exit",  "color": (120, 200, 120), "emoji": "🏁", "channel": "exit"},
     {"symbol": "k", "name": "key",   "color": (240, 200, 60),  "emoji": "🗝️", "channel": "key"},
     {"symbol": "D", "name": "door",  "color": (150, 95, 50),   "emoji": "🚪", "channel": "door"},
     {"symbol": "^", "name": "trap",  "color": (220, 80, 80),   "emoji": "🔺", "channel": "trap"},
+    {"symbol": ">", "name": "exit",  "color": (120, 200, 120), "emoji": "🏁", "channel": "exit"},
 ]
 
 # The agent is not a tile, but it is drawn like one.
