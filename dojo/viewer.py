@@ -134,8 +134,8 @@ def replay_html(episode: dict, cell_size: int = 36):
     width = len(episode["maze"][0]) * cell_size + 40
     height = len(episode["maze"]) * cell_size + 130
     page = html.escape(replay_page(episode, cell_size), quote=True)
-    return HTML(f'<iframe srcdoc="{page}" width="{width}" height="{height}" '
-                f'style="border: none;"></iframe>')
+    return HTML(f'<div><iframe srcdoc="{page}" width="{width}" height="{height}" '
+                f'style="border: none;"></iframe></div>')
 
 
 # ---------------------------------------------------------------------------

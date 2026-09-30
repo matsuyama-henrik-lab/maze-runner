@@ -4,12 +4,15 @@ import json
 
 import numpy as np
 import pytest
+import torch
 from gymnasium.utils.env_checker import check_env
 from PIL import Image
 
 from dojo import maze as mz
 from dojo.agents import random_agent, wall_follower
 from dojo.env import CHANNELS, FORWARD, LEFT, REWARDS, MazeEnv, obs_layout
+from dojo.train import (Config, check_config, evaluate, export_weights, forward, load_weights,
+                        make_actor, softmax, train, weights_policy)
 from dojo.viewer import grid_at, record_episode, replay_page, save_gif
 
 # ---------------------------------------------------------------------------
@@ -249,7 +252,7 @@ def test_door_blocks_without_key_and_opens_with_key():
     env.has_key = True
     _, reward, *_ = env.step(FORWARD)
     assert (env.x, env.door_open) == (4, True)
-    assert reward == pytest.approx(REWARDS["step"] + REWARDS["door"])
+    assert reward == pytest.approx(REWARDS["step"] + REWARDS["door"] + REWARDS["new_cell"])
     assert env.grid[1][4] == mz.FLOOR
 
 
@@ -263,8 +266,8 @@ def test_key_door_exit_rewards():
         rewards.append(reward)
     assert env.has_key and obs[env.layout["has_key"][0]] == 1
     assert terminated and not truncated
-    assert sum(rewards) == pytest.approx(6 * REWARDS["step"] + REWARDS["key"]
-                                         + REWARDS["door"] + REWARDS["exit"])
+    assert sum(rewards) == pytest.approx(6 * REWARDS["step"] + 6 * REWARDS["new_cell"]
+                                         + REWARDS["key"] + REWARDS["door"] + REWARDS["exit"])
 
 
 def test_trap_costs_but_episode_continues():
@@ -273,8 +276,13 @@ def test_trap_costs_but_episode_continues():
     env.x, env.y, env.direction = 3, 5, 1           # trap (4,5) ahead
     _, reward, terminated, _, _ = env.step(FORWARD)
     assert (env.x, env.y) == (4, 5) and not terminated
-    assert reward == pytest.approx(REWARDS["step"] + REWARDS["trap"])
+    assert reward == pytest.approx(REWARDS["step"] + REWARDS["trap"] + REWARDS["new_cell"])
     assert env.state()["trap_hits"] == 1
+    # Stepping back and onto the trap again: no new-cell bonus, but the trap hurts again.
+    env.step(LEFT), env.step(LEFT), env.step(FORWARD), env.step(LEFT), env.step(LEFT)
+    _, reward, *_ = env.step(FORWARD)
+    assert reward == pytest.approx(REWARDS["step"] + REWARDS["trap"])
+    assert env.state()["trap_hits"] == 2
 
 
 def test_truncation_and_state():
@@ -334,3 +342,87 @@ def test_grid_at_removes_key_and_opened_door():
     state = {"has_key": True, "door_open": True}
     grid = grid_at(CORRIDOR, state)
     assert "".join(grid[1]) == "<......>"
+
+
+# ---------------------------------------------------------------------------
+# train.py
+# ---------------------------------------------------------------------------
+
+TINY = mz.from_ascii("""
+    #######
+    <.....#
+    #####.#
+    #.....#
+    #.#####
+    #.....>
+    #######
+""")
+
+
+def test_numpy_forward_matches_torch_actor(tmp_path):
+    torch.manual_seed(0)
+    env = MazeEnv(width=11, height=11, key_door=True, traps=2)
+    actor = make_actor(env.observation_space.shape[0], env.action_space.n)
+    path = tmp_path / "weights.json"
+    export_weights(actor, path, env.config)
+    weights = load_weights(path, env.config)
+    for seed in range(20):
+        obs, _ = env.reset(seed=seed)
+        for _ in range(10):
+            logits = actor(torch.as_tensor(obs)).detach().numpy()
+            assert np.allclose(forward(weights, obs), logits, atol=1e-5)
+            assert weights_policy(weights, greedy=True)(obs) == int(np.argmax(logits))
+            assert np.allclose(softmax(forward(weights, obs)), torch.softmax(torch.as_tensor(logits), 0).numpy(), atol=1e-6)
+            obs, *_ = env.step(int(np.argmax(logits)))
+
+
+def test_weights_with_wrong_config_are_rejected(tmp_path):
+    env = MazeEnv()
+    path = tmp_path / "weights.json"
+    export_weights(make_actor(153, 3), path, env.config)
+    with pytest.raises(ValueError):
+        load_weights(path, MazeEnv(view=3).config)
+    check_config(load_weights(path), env.config)   # the right config is fine
+
+
+def test_ppo_improves_on_tiny_maze(tmp_path):
+    maze_file = tmp_path / "tiny.txt"
+    maze_file.write_text(mz.to_ascii(TINY))
+    config = Config(maze=str(maze_file), steps=50_000, n_envs=4, n_rollout=64, seed=0)
+    actor, critic, curve = train(config, verbose=False)
+    returns = [row["mean_return"] for row in curve if row["mean_return"] is not None]
+    assert returns[-1] > returns[0] + 0.5
+    # The trained agent solves the maze, also through the exported weights.
+    env = MazeEnv(maze=TINY)
+    export_weights(actor, tmp_path / "weights.json", env.config)
+    policy = weights_policy(load_weights(tmp_path / "weights.json", env.config), greedy=True)
+    assert evaluate(policy, env, n_mazes=1)["success_rate"] == 1
+
+
+def test_sb3_export_matches_sb3_model(tmp_path):
+    pytest.importorskip("stable_baselines3")
+    from stable_baselines3 import PPO
+
+    from dojo.train import export_weights_sb3, sb3_policy
+
+    env = MazeEnv(width=7, height=7)
+    model = PPO("MlpPolicy", env, n_steps=64, batch_size=32, n_epochs=1, seed=0)
+    model.learn(128)
+    export_weights_sb3(model, tmp_path / "sb3.json")
+    weights = load_weights(tmp_path / "sb3.json", env.config)
+    for seed in range(10):
+        obs, _ = env.reset(seed=seed)
+        for _ in range(10):
+            action = sb3_policy(model)(obs)
+            assert weights_policy(weights, greedy=True)(obs) == action
+            obs, *_ = env.step(action)
+
+
+def test_weights_policy_samples_with_softmax(tmp_path):
+    env = MazeEnv()
+    path = tmp_path / "weights.json"
+    export_weights(make_actor(153, 3), path, env.config)   # untrained: ~uniform
+    policy = weights_policy(load_weights(path), seed=0)
+    obs, _ = env.reset(seed=0)
+    counts = np.bincount([policy(obs) for _ in range(600)], minlength=3)
+    assert all(counts > 150)   # all three actions are chosen

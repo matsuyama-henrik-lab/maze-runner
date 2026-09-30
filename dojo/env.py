@@ -37,6 +37,7 @@ from dojo import maze as mz
 # ---------------------------------------------------------------------------
 REWARDS = {
     "step": -0.01,   # every step costs a little, so short paths are better
+    "new_cell": 0.02,  # first visit of a cell: rewards exploring (0 = switch off)
     "key": 0.2,      # picking up the key
     "door": 0.2,     # opening the door (with the key)
     "trap": -0.5,    # stepping on a trap (the episode continues!)
@@ -166,7 +167,9 @@ class MazeEnv(gym.Env):
             reward += tile_reward
             if can_enter:
                 self.x, self.y = x, y
-                self.visited.add((x, y))
+                if (x, y) not in self.visited:
+                    reward += REWARDS["new_cell"]
+                    self.visited.add((x, y))
 
         self.steps += 1
         truncated = self.steps >= self.max_steps and not terminated

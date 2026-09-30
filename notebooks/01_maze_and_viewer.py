@@ -31,8 +31,8 @@
 import sys
 
 if "google.colab" in sys.modules:
-    # TODO: replace with the real repository URL
-    # %pip install -q git+https://github.com/USER/dojo
+    # TODO (step 6): install from the real repository URL here, e.g.
+    #   pip install -q git+https://github.com/USER/dojo
     pass
 
 # %%
