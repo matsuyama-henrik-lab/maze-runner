@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dojo"
+version = "0.1.0"
+description = "Train reinforcement-learning agents to solve grid mazes (teaching prototype)."
+readme = "README.md"
+requires-python = ">=3.10"
+# Version ranges instead of exact pins: Colab already ships numpy/torch/pillow,
+# and an exact pin would force a large reinstall there. The upper bounds keep
+# us away from future major versions with breaking changes.
+# Tested with: numpy 2.5.3, gymnasium 1.3.0, torch 2.14.0, pillow 12.3.0, ipywidgets 8.1.9
+dependencies = [
+    "numpy>=1.26,<3",
+    "gymnasium>=1.0,<2",
+    "torch>=2.2,<3",
+    "pillow>=10,<13",
+    "ipywidgets>=8,<9",
+]
+
+[project.optional-dependencies]
+sb3 = ["stable-baselines3>=2.4,<3"]
+dev = ["pytest>=8", "jupytext>=1.16"]
+
+[tool.setuptools]
+packages = ["dojo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
