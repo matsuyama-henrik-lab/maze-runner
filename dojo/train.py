@@ -51,6 +51,7 @@ class Config:
     maze: str | None = None     # "demo" or a maze file (.json / .txt) = always the same maze
     view: int = 5
     compass: bool = True
+    explored: bool = False      # add "fraction of cells visited" to the observation
     # PPO
     steps: int = 300_000        # total environment steps (all envs together)
     n_envs: int = 16            # environments played in parallel
@@ -76,7 +77,7 @@ def make_env(config: Config) -> MazeEnv:
     maze = load_maze(config.maze) if config.maze else None
     return MazeEnv(maze=maze, width=config.width, height=config.height, loops=config.loops,
                    key_door=config.key_door, traps=config.traps,
-                   view=config.view, compass=config.compass)
+                   view=config.view, compass=config.compass, explored=config.explored)
 
 
 def load_maze(name: str) -> list[str]:
@@ -336,7 +337,7 @@ def print_results(results: dict) -> None:
 # Weight export (for the Godot arena) and the NumPy forward pass
 # ---------------------------------------------------------------------------
 # Weights JSON format:
-#   {"config": {"view": 5, "compass": true, "obs_version": 1},
+#   {"config": {"view": 5, "compass": true, "explored": false, "obs_version": 1},
 #    "obs_layout": {"view": [0, 150], ...}, "actions": [...], "activation": "tanh",
 #    "layers": [{"W": [[...], ...], "b": [...]}, ...]}
 # W has shape (n_out, n_in) (like torch.nn.Linear), so a layer computes W @ x + b.
@@ -453,6 +454,8 @@ def parse_args() -> Config:
     parser.add_argument("--loops", type=float, default=defaults.loops)
     parser.add_argument("--key-door", action="store_true")
     parser.add_argument("--traps", type=int, default=defaults.traps)
+    parser.add_argument("--explored", action="store_true",
+                        help="add the fraction of visited cells to the observation")
     parser.add_argument("--maze", default=None, help='"demo" or a maze file: always train on this maze')
     parser.add_argument("--lr", type=float, default=defaults.lr)
     parser.add_argument("--ent-coef", type=float, default=defaults.ent_coef)

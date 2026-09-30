@@ -195,8 +195,21 @@ def test_obs_layout():
     obs, _ = env.reset(seed=0)
     assert env.layout == {"view": (0, 150), "has_key": (150, 151), "compass": (151, 153)}
     assert obs.shape == (153,) and obs.dtype == np.float32
-    assert obs_layout({"view": 3, "compass": False}) == {"view": (0, 54), "has_key": (54, 55)}
+    assert obs_layout({"view": 3, "compass": False, "explored": False}) == \
+        {"view": (0, 54), "has_key": (54, 55)}
     assert MazeEnv(view=3, compass=False).observation_space.shape == (55,)
+    assert MazeEnv(explored=True).layout["explored"] == (153, 154)
+
+
+def test_explored_fraction():
+    env = MazeEnv(maze=CORRIDOR, explored=True)   # 7 walkable cells (with the exit)
+    obs, _ = env.reset()
+    assert obs[-1] == pytest.approx(1 / 7)
+    env.step(FORWARD)
+    obs, *_ = env.step(FORWARD)
+    assert obs[-1] == pytest.approx(3 / 7)
+    obs, *_ = env.step(LEFT)                      # turning does not visit new cells
+    assert obs[-1] == pytest.approx(3 / 7)
 
 
 def test_reset_seed_selects_maze():

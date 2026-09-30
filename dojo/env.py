@@ -21,8 +21,12 @@ Observation: one flat float32 vector, built from named parts in this order
     "has_key"  1.0 if the agent carries the key, else 0.0
     "compass"  (only if compass=True) unit vector from the agent to the exit,
                in the agent's frame: (forward, right). (0, 0) at the exit.
+    "explored" (only if explored=True) fraction of the walkable cells the agent
+               has visited (0..1). A kind of "clock": on a fixed maze it lets
+               the agent tell "at the start" and "back at the start later"
+               apart. It does not help much on new mazes.
 
-With the defaults (view=5, compass=True): 5*5*6 + 1 + 2 = 153 values.
+With the defaults (view=5, compass=True, explored=False): 5*5*6 + 1 + 2 = 153 values.
 Godot must build exactly the same vector, so change this layout only
 together with OBS_VERSION.
 """
@@ -65,10 +69,13 @@ def obs_layout(config: dict) -> dict[str, tuple[int, int]]:
     """Names and index ranges [start, end) of the observation parts.
 
     Example (defaults): {"view": (0, 150), "has_key": (150, 151), "compass": (151, 153)}
+    Optional parts (compass, explored) are only present when switched on.
     """
     sizes = {"view": config["view"] ** 2 * len(CHANNELS), "has_key": 1}
     if config["compass"]:
         sizes["compass"] = 2
+    if config["explored"]:
+        sizes["explored"] = 1
     layout, start = {}, 0
     for name, size in sizes.items():
         layout[name] = (start, start + size)
@@ -85,6 +92,7 @@ class MazeEnv(gym.Env):
                 settings for mz.generate()
     view        size of the view window (odd number)
     compass     add the direction to the exit to the observation
+    explored    add the fraction of visited cells to the observation
     max_steps   the episode is truncated after this many steps
                 (default: 4 x number of cells of the maze)
     render_mode "rgb_array" or "ansi"
@@ -94,7 +102,8 @@ class MazeEnv(gym.Env):
 
     def __init__(self, maze: list[str] | None = None, width: int = 9, height: int = 9,
                  loops: float = 0.0, key_door: bool = False, traps: int = 0,
-                 view: int = 5, compass: bool = True, max_steps: int | None = None,
+                 view: int = 5, compass: bool = True, explored: bool = False,
+                 max_steps: int | None = None,
                  render_mode: str | None = None):
         if maze is not None:
             problems = mz.check(maze)
@@ -110,7 +119,8 @@ class MazeEnv(gym.Env):
 
         # The configuration travels with a trained agent (weights JSON, bridge),
         # because the agent only works with the observation it was trained on.
-        self.config = {"view": view, "compass": compass, "obs_version": OBS_VERSION}
+        self.config = {"view": view, "compass": compass, "explored": explored,
+                       "obs_version": OBS_VERSION}
         self.layout = obs_layout(self.config)
         n_obs = max(end for _, end in self.layout.values())
         self.observation_space = gym.spaces.Box(-1.0, 1.0, shape=(n_obs,), dtype=np.float32)
@@ -141,6 +151,8 @@ class MazeEnv(gym.Env):
         self.grid = [list(row) for row in self.maze]
         self.x, self.y, self.direction = mz.start_of(self.maze)
         self.exit_x, self.exit_y = mz.find(self.maze, mz.EXIT)[0]
+        self.n_walkable = sum(1 for row in self.maze for tile in row
+                              if tile not in (mz.WALL, mz.ENTRY))
         self.has_key = False
         self.door_open = False
         self.visited = {(self.x, self.y)}
@@ -228,6 +240,8 @@ class MazeEnv(gym.Env):
                  "has_key": [float(self.has_key)]}
         if self.config["compass"]:
             parts["compass"] = self._compass()
+        if self.config["explored"]:
+            parts["explored"] = [len(self.visited) / self.n_walkable]
         # Concatenate in the order of obs_layout().
         return np.concatenate([np.asarray(parts[name], dtype=np.float32)
                                for name in self.layout])
