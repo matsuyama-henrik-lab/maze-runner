@@ -31,8 +31,7 @@
 import sys
 
 if "google.colab" in sys.modules:
-    # TODO (step 6): install from the real repository URL here, e.g.
-    #   pip install -q git+https://github.com/USER/dojo
+    # %pip install -q git+https://github.com/matsuyama-henrik-lab/maze-runner
     pass
 
 # %%

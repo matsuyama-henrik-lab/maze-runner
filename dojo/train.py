@@ -260,7 +260,7 @@ def train(config: Config, verbose: bool = True) -> tuple[nn.Sequential, nn.Seque
         if verbose and (update % 10 == 0 or update == n_updates):
             print(f"step {row['step']:>8}  {row['time_s']:>6.1f}s  return {row['mean_return']}"
                   f"  success {row['success_rate']}  length {row['mean_length']}"
-                  f"  entropy {row['entropy']:.3f}")
+                  f"  entropy {row['entropy']:.3f}", flush=True)  # flush: show it now (e.g. in Slurm logs)
     return actor, critic, curve
 
 
@@ -469,7 +469,7 @@ def main() -> None:
     config = parse_args()
     out = Path(config.out)
     out.mkdir(parents=True, exist_ok=True)
-    print(f"training on {config.device}, output in {out}/")
+    print(f"training on {config.device}, output in {out}/", flush=True)
 
     actor, critic, curve = train(config)
     env_config = make_env(config).config

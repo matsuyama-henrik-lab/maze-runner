@@ -17,7 +17,7 @@ dependencies = [
     "gymnasium>=1.0,<2",
     "torch>=2.2,<3",
     "pillow>=10,<13",
-    "ipywidgets>=8,<9",
+    "ipywidgets>=7.6,<9",      # Colab may still ship 7.x; we only use Image, Label, VBox
 ]
 
 [project.optional-dependencies]
